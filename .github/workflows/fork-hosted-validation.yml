@@ -1,0 +1,50 @@
+name: Fork Hosted Validation
+
+on:
+  push:
+    branches:
+      - ci/hosted-validation
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    if: github.repository == 'dijedontahiri/gemini-cli'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout validation control branch
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Read immutable candidate
+        id: candidate
+        shell: bash
+        run: |
+          set -euo pipefail
+          candidate="$(tr -d '[:space:]' < .github/validation-candidate.txt)"
+          [[ "$candidate" =~ ^[0-9a-f]{40}$ ]]
+          cp .github/validation-command.sh /tmp/validation-command.sh
+          chmod +x /tmp/validation-command.sh
+          if ! git cat-file -e "${candidate}^{commit}" 2>/dev/null; then
+            git fetch --no-tags origin "$candidate"
+          fi
+          echo "sha=$candidate" >> "$GITHUB_OUTPUT"
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20.19.0
+
+      - name: Checkout immutable candidate
+        shell: bash
+        run: |
+          set -euo pipefail
+          git checkout --detach "${{ steps.candidate.outputs.sha }}"
+          test "$(git rev-parse HEAD)" = "${{ steps.candidate.outputs.sha }}"
+
+      - name: Run validation command
+        shell: bash
+        run: /tmp/validation-command.sh
