@@ -154,6 +154,9 @@ export class HookSystem {
   private readonly hookAggregator: HookAggregator;
   private readonly hookPlanner: HookPlanner;
   private readonly hookEventHandler: HookEventHandler;
+  private sessionEndEventPromise:
+    | Promise<AggregatedHookResult | undefined>
+    | undefined;
 
   constructor(config: Config) {
     // Initialize components
@@ -222,6 +225,7 @@ export class HookSystem {
   async fireSessionStartEvent(
     source: SessionStartSource,
   ): Promise<DefaultHookOutput | undefined> {
+    this.sessionEndEventPromise = undefined;
     const result = await this.hookEventHandler.fireSessionStartEvent(source);
     return result.finalOutput;
   }
@@ -229,7 +233,21 @@ export class HookSystem {
   async fireSessionEndEvent(
     reason: SessionEndReason,
   ): Promise<AggregatedHookResult | undefined> {
-    return this.hookEventHandler.fireSessionEndEvent(reason);
+    if (this.sessionEndEventPromise) {
+      return this.sessionEndEventPromise;
+    }
+
+    const eventPromise = this.hookEventHandler.fireSessionEndEvent(reason);
+    this.sessionEndEventPromise = eventPromise;
+
+    try {
+      return await eventPromise;
+    } catch (error) {
+      if (this.sessionEndEventPromise === eventPromise) {
+        this.sessionEndEventPromise = undefined;
+      }
+      throw error;
+    }
   }
 
   async firePreCompressEvent(
