@@ -7,6 +7,9 @@ npm --version
 echo 'Installing exact lockfile dependencies for issue #29424 shutdown diagnosis'
 npm ci
 
+echo 'Building workspaces before targeted tests'
+npm run build
+
 echo 'Verifying SDK Client.close delegates to its connected transport'
 node --input-type=module <<'EOF'
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
