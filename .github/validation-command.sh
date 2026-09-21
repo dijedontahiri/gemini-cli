@@ -7,6 +7,9 @@ npm --version
 echo 'Installing exact lockfile dependencies for interactive SessionEnd regression validation'
 npm ci
 
+echo 'Building workspaces required by CLI tests'
+npm run build
+
 echo 'Checking current interactive SessionEnd cleanup registrations on immutable upstream candidate'
 git grep -n "fireSessionEndEvent(SessionEndReason.Exit)" -- \
   packages/cli/src/gemini.tsx \
