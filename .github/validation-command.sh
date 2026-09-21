@@ -1,16 +1,21 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+mark_stage() {
+  printf '%s\n' "$1" | tee /tmp/validation-stage
+  printf '\n==> %s\n' "$1"
+}
+
 node --version
 npm --version
 
-echo 'Installing exact lockfile dependencies for SessionEnd idempotence validation'
+mark_stage 'npm ci'
 npm ci
 
-echo 'Building all workspaces before targeted validation'
+mark_stage 'workspace build'
 npm run build
 
-echo 'Installing temporary regression test against the immutable candidate'
+mark_stage 'temporary SessionEnd baseline/candidate regression'
 cat > packages/core/src/hooks/sessionEndValidation.test.ts <<'EOF'
 /**
  * @license
@@ -94,22 +99,24 @@ EOF
 npm test -w @google/gemini-cli-core -- src/hooks/sessionEndValidation.test.ts
 rm packages/core/src/hooks/sessionEndValidation.test.ts
 
-echo 'Running committed regression test when present on the candidate'
 if [[ -f packages/core/src/hooks/hookSystem.sessionEnd.test.ts ]]; then
+  mark_stage 'committed SessionEnd regression test'
   npm test -w @google/gemini-cli-core -- src/hooks/hookSystem.sessionEnd.test.ts
 fi
 
-echo 'Running existing HookSystem integration coverage'
+mark_stage 'existing HookSystem integration coverage'
 npm test -w @google/gemini-cli-core -- src/hooks/hookSystem.test.ts
 
-echo 'Running relevant interactive exit integration coverage'
+mark_stage 'interactive ctrl-c exit integration coverage'
 RUN_FLAKY_INTEGRATION=1 GEMINI_SANDBOX=false npx vitest run --root ./integration-tests ctrl-c-exit.test.ts
 
-echo 'Running session clear lifecycle integration coverage'
+mark_stage 'session clear lifecycle integration coverage'
 RUN_FLAKY_INTEGRATION=1 GEMINI_SANDBOX=false npx vitest run --root ./integration-tests hooks-system.test.ts -t 'should fire SessionEnd and SessionStart hooks on /clear command'
 
-echo 'Running full repository preflight on the exact candidate'
+mark_stage 'full repository preflight'
 npm run preflight
 
-echo 'Verifying preflight/formatting did not mutate tracked candidate files'
+mark_stage 'final tracked-tree diff check'
 git diff --exit-code
+
+mark_stage 'complete'
