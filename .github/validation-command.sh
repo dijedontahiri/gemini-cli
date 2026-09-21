@@ -102,5 +102,14 @@ fi
 echo 'Running existing HookSystem integration coverage'
 npm test -w @google/gemini-cli-core -- src/hooks/hookSystem.test.ts
 
+echo 'Running relevant interactive exit integration coverage'
+RUN_FLAKY_INTEGRATION=1 GEMINI_SANDBOX=false npx vitest run --root ./integration-tests ctrl-c-exit.test.ts
+
+echo 'Running session clear lifecycle integration coverage'
+RUN_FLAKY_INTEGRATION=1 GEMINI_SANDBOX=false npx vitest run --root ./integration-tests hooks-system.test.ts -t 'should fire SessionEnd and SessionStart hooks on /clear command'
+
 echo 'Running full repository preflight on the exact candidate'
 npm run preflight
+
+echo 'Verifying preflight/formatting did not mutate tracked candidate files'
+git diff --exit-code
