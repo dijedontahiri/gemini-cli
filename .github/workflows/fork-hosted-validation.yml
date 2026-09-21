@@ -47,4 +47,17 @@ jobs:
 
       - name: Run validation command
         shell: bash
-        run: /tmp/validation-command.sh
+        run: |
+          set -o pipefail
+          /tmp/validation-command.sh 2>&1 | tee /tmp/validation.log
+
+      - name: Preserve validation evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: validation-evidence-${{ github.run_id }}
+          path: |
+            /tmp/validation.log
+            /tmp/validation-stage
+          if-no-files-found: warn
+          retention-days: 7
