@@ -12,7 +12,7 @@ test "$BASE_SHA" = "$EXPECTED_BASE"
 node --version
 npm --version
 
-apply_test_patch() {
+apply_unit_test_patch() {
 python3 - <<'PY'
 from pathlib import Path
 p = Path('packages/core/src/tools/shell.test.ts')
@@ -186,52 +186,179 @@ p.write_text(s)
 PY
 }
 
+apply_integration_patch() {
+cat > integration-tests/shell-background-temp-cleanup.responses <<'EOF'
+{"method":"generateContentStream","response":[{"candidates":[{"content":{"parts":[{"text":"I will start the short command in the background."},{"functionCall":{"name":"run_shell_command","args":{"command":"node -e \"setTimeout(() => {}, 2500)\"","is_background":true}}}],"role":"model"},"finishReason":"STOP","index":0}]}]}
+{"method":"generateContentStream","response":[{"candidates":[{"content":{"parts":[{"text":"Background command started."}],"role":"model"},"finishReason":"STOP","index":0}]}]}
+EOF
+cat > integration-tests/shell-background-temp-cleanup.test.ts <<'EOF'
+/**
+ * @license
+ * Copyright 2026 Google LLC
+ * SPDX-License-Identifier: Apache-2.0
+ */
+
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import * as fs from 'node:fs/promises';
+import os from 'node:os';
+import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { setTimeout as delay } from 'node:timers/promises';
+import { TestRig } from './test-helper.js';
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = dirname(__filename);
+
+async function shellTempDirs(root: string): Promise<string[]> {
+  const entries = await fs.readdir(root, { withFileTypes: true });
+  return entries
+    .filter((entry) => entry.isDirectory() && entry.name.startsWith('gemini-shell-'))
+    .map((entry) => entry.name);
+}
+
+async function waitForShellTempDir(
+  root: string,
+  shouldExist: boolean,
+  timeoutMs: number,
+): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    const dirs = await shellTempDirs(root);
+    if ((dirs.length > 0) === shouldExist) {
+      return;
+    }
+    await delay(50);
+  }
+
+  const dirs = await shellTempDirs(root);
+  if (shouldExist) {
+    throw new Error('background shell temp directory was never created');
+  }
+  throw new Error(
+    `background shell temp directory still exists after process exit: ${dirs.join(', ')}`,
+  );
+}
+
+describe('background shell temp cleanup', () => {
+  let rig: TestRig;
+
+  beforeEach(() => {
+    rig = new TestRig();
+  });
+
+  afterEach(async () => {
+    await rig.cleanup();
+  });
+
+  it('removes actual shell temp artifacts after a background process exits', async () => {
+    const tempRoot = await fs.mkdtemp(
+      join(os.tmpdir(), 'gemini-shell-cleanup-root-'),
+    );
+
+    try {
+      rig.setup('shell-background-temp-cleanup', {
+        fakeResponsesPath: join(
+          __dirname,
+          'shell-background-temp-cleanup.responses',
+        ),
+        settings: {
+          tools: {
+            core: ['run_shell_command'],
+          },
+        },
+      });
+
+      const run = await rig.runInteractive({
+        approvalMode: 'yolo',
+        env: { TMPDIR: tempRoot },
+      });
+
+      await run.type('Start the short background command.');
+      await run.type('\r');
+      await run.expectText('Background command started.', 30000);
+
+      await waitForShellTempDir(tempRoot, true, 5000);
+      expect(await shellTempDirs(tempRoot)).not.toHaveLength(0);
+
+      await waitForShellTempDir(tempRoot, false, 10000);
+      expect(await shellTempDirs(tempRoot)).toHaveLength(0);
+    } finally {
+      await fs.rm(tempRoot, { recursive: true, force: true });
+    }
+  }, 30000);
+});
+EOF
+}
+
 mark_stage 'npm ci'
 npm ci
 
 mark_stage 'workspace build'
 npm run build
 
-mark_stage 'baseline regression patch'
-apply_test_patch
+mark_stage 'baseline unit regression patch'
+apply_unit_test_patch
 
-mark_stage 'prove current-main failure'
+mark_stage 'prove current-main unit failure'
 set +e
-npm test -w @google/gemini-cli-core -- src/tools/shell.test.ts -t 'should clean up the temp directory after a background process exits' 2>&1 | tee /tmp/baseline.log
-baseline_status=${PIPESTATUS[0]}
+npm test -w @google/gemini-cli-core -- src/tools/shell.test.ts -t 'should clean up the temp directory after a background process exits' 2>&1 | tee /tmp/baseline-unit.log
+baseline_unit_status=${PIPESTATUS[0]}
 set -e
-if [[ $baseline_status -eq 0 ]]; then
-  echo 'ERROR: baseline regression test unexpectedly passed'
+if [[ $baseline_unit_status -eq 0 ]]; then
+  echo 'ERROR: baseline unit regression unexpectedly passed'
   exit 1
 fi
-grep -F 'background cleanup should be transferred to process exit' /tmp/baseline.log >/dev/null
-printf 'Verified intended baseline failure on %s\n' "$BASE_SHA"
+grep -F 'background cleanup should be transferred to process exit' /tmp/baseline-unit.log >/dev/null
+printf 'Verified intended unit baseline failure on %s\n' "$BASE_SHA"
 
 git reset --hard "$BASE_SHA"
 git clean -fd
 
-mark_stage 'apply minimal candidate and regression tests'
-apply_source_patch
-apply_test_patch
+mark_stage 'baseline integration regression patch'
+apply_integration_patch
 
-mark_stage 'focused temp-directory regression tests'
+mark_stage 'prove current-main integration failure'
+set +e
+GEMINI_API_KEY=dummy RUN_FLAKY_INTEGRATION=1 GEMINI_SANDBOX=false npx vitest run --root ./integration-tests shell-background-temp-cleanup.test.ts 2>&1 | tee /tmp/baseline-integration.log
+baseline_integration_status=${PIPESTATUS[0]}
+set -e
+if [[ $baseline_integration_status -eq 0 ]]; then
+  echo 'ERROR: baseline integration regression unexpectedly passed'
+  exit 1
+fi
+grep -F 'background shell temp directory still exists after process exit' /tmp/baseline-integration.log >/dev/null
+printf 'Verified intended integration baseline failure on %s\n' "$BASE_SHA"
+
+git reset --hard "$BASE_SHA"
+git clean -fd
+
+mark_stage 'apply minimal candidate and regressions'
+apply_source_patch
+apply_unit_test_patch
+apply_integration_patch
+
+mark_stage 'focused temp-directory unit regressions'
 npm test -w @google/gemini-cli-core -- src/tools/shell.test.ts -t 'temp directory'
 
 mark_stage 'full shell tool unit suite'
 npm test -w @google/gemini-cli-core -- src/tools/shell.test.ts
 
-mark_stage 'background shell integration coverage'
+mark_stage 'direct background temp cleanup integration'
+GEMINI_API_KEY=dummy RUN_FLAKY_INTEGRATION=1 GEMINI_SANDBOX=false npx vitest run --root ./integration-tests shell-background-temp-cleanup.test.ts
+
+mark_stage 'existing background shell integration coverage'
 GEMINI_API_KEY=dummy RUN_FLAKY_INTEGRATION=1 GEMINI_SANDBOX=false npx vitest run --root ./integration-tests shell-background.test.ts
 
 mark_stage 'full repository preflight'
 npm run preflight
 
 mark_stage 'final candidate diff review'
+git add -N integration-tests/shell-background-temp-cleanup.responses integration-tests/shell-background-temp-cleanup.test.ts
 git diff --check
-expected=$'packages/core/src/tools/shell.test.ts\npackages/core/src/tools/shell.ts'
+expected=$'integration-tests/shell-background-temp-cleanup.responses\nintegration-tests/shell-background-temp-cleanup.test.ts\npackages/core/src/tools/shell.test.ts\npackages/core/src/tools/shell.ts'
 actual="$(git diff --name-only | sort)"
 printf 'Changed files:\n%s\n' "$actual"
 test "$actual" = "$expected"
-git diff -- packages/core/src/tools/shell.ts packages/core/src/tools/shell.test.ts
+git diff -- packages/core/src/tools/shell.ts packages/core/src/tools/shell.test.ts integration-tests/shell-background-temp-cleanup.test.ts integration-tests/shell-background-temp-cleanup.responses
 
 mark_stage 'complete'
