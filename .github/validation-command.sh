@@ -221,7 +221,7 @@ mark_stage 'full shell tool unit suite'
 npm test -w @google/gemini-cli-core -- src/tools/shell.test.ts
 
 mark_stage 'background shell integration coverage'
-RUN_FLAKY_INTEGRATION=1 GEMINI_SANDBOX=false npx vitest run --root ./integration-tests shell-background.test.ts
+GEMINI_API_KEY=dummy RUN_FLAKY_INTEGRATION=1 GEMINI_SANDBOX=false npx vitest run --root ./integration-tests shell-background.test.ts
 
 mark_stage 'full repository preflight'
 npm run preflight
