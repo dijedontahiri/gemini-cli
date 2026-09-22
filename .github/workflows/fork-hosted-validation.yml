@@ -45,8 +45,21 @@ jobs:
           git checkout --detach "${{ steps.candidate.outputs.sha }}"
           test "$(git rev-parse HEAD)" = "${{ steps.candidate.outputs.sha }}"
 
+      - name: Install upstream Linux test dependencies
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update -qq
+          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -qq bubblewrap
+          # Match upstream CI on Ubuntu 24.04+, where unprivileged bwrap needs this.
+          sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0 || true
+          command -v bwrap
+
       - name: Run validation command
         shell: bash
+        env:
+          GEMINI_CLI_TRUST_WORKSPACE: 'true'
+          NO_COLOR: 'true'
         run: |
           set -o pipefail
           /tmp/validation-command.sh 2>&1 | tee /tmp/validation.log
