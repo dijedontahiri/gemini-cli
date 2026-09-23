@@ -28,6 +28,32 @@ jobs:
           [[ "$candidate" =~ ^[0-9a-f]{40}$ ]]
           cp .github/validation-command.sh /tmp/validation-command.sh
           chmod +x /tmp/validation-command.sh
+          # The controller script is preserved for prior evidence. Retarget its
+          # expected immutable base and rebuild the root bundle after applying
+          # the disposable candidate so TestRig executes candidate code rather
+          # than the baseline bundle built before the patch.
+          sed -i "s/^EXPECTED_BASE=.*/EXPECTED_BASE='${candidate}'/" /tmp/validation-command.sh
+          python3 - <<'PY'
+          from pathlib import Path
+          p = Path('/tmp/validation-command.sh')
+          s = p.read_text()
+          needle = """mark_stage 'full shell tool unit suite'
+npm test -w @google/gemini-cli-core -- src/tools/shell.test.ts
+
+mark_stage 'direct background temp cleanup integration'
+"""
+          replacement = """mark_stage 'full shell tool unit suite'
+npm test -w @google/gemini-cli-core -- src/tools/shell.test.ts
+
+mark_stage 'rebuild exact candidate bundle'
+npm run build
+
+mark_stage 'direct background temp cleanup integration'
+"""
+          if needle not in s:
+              raise SystemExit('candidate bundle rebuild insertion point drifted')
+          p.write_text(s.replace(needle, replacement, 1))
+          PY
           if ! git cat-file -e "${candidate}^{commit}" 2>/dev/null; then
             git fetch --no-tags origin "$candidate"
           fi
