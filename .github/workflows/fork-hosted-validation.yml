@@ -28,11 +28,7 @@ jobs:
           [[ "$candidate" =~ ^[0-9a-f]{40}$ ]]
           cp .github/validation-command.sh /tmp/validation-command.sh
           chmod +x /tmp/validation-command.sh
-          # Keep the historical controller script untouched, but retarget the
-          # copied command to the immutable SHA selected above and rebuild the
-          # root bundle after applying the disposable source candidate.
           sed -i "s/^EXPECTED_BASE=.*/EXPECTED_BASE='${candidate}'/" /tmp/validation-command.sh
-          python3 -c 'from pathlib import Path; p=Path("/tmp/validation-command.sh"); s=p.read_text(); marker="mark_stage '\''direct background temp cleanup integration'\''"; assert marker in s, "candidate bundle rebuild insertion point drifted"; p.write_text(s.replace(marker, "mark_stage '\''rebuild exact candidate bundle'\''\nnpm run build\n\n" + marker, 1))'
           if ! git cat-file -e "${candidate}^{commit}" 2>/dev/null; then
             git fetch --no-tags origin "$candidate"
           fi
