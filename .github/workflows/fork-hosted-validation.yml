@@ -29,6 +29,7 @@ jobs:
           cp .github/validation-command.sh /tmp/validation-command.sh
           chmod +x /tmp/validation-command.sh
           sed -i "s/^EXPECTED_BASE=.*/EXPECTED_BASE='${candidate}'/" /tmp/validation-command.sh
+          python3 -c 'from pathlib import Path; p=Path("/tmp/validation-command.sh"); s=p.read_text(); old="mark_stage '\''rebuild exact candidate bundle'\''\nnpm run build"; new="mark_stage '\''rebuild exact candidate bundle'\''\nnpm run bundle"; assert old in s, "candidate bundle rebuild marker drifted"; p.write_text(s.replace(old, new, 1))'
           if ! git cat-file -e "${candidate}^{commit}" 2>/dev/null; then
             git fetch --no-tags origin "$candidate"
           fi
