@@ -1,0 +1,1 @@
+{"method":"generateContentStream","response":[{"candidates":[{"content":{"parts":[{"text":"Hello"}],"role":"model"},"finishReason":"STOP","index":0}],"usageMetadata":{"promptTokenCount":20,"candidatesTokenCount":7,"cachedContentTokenCount":4,"thoughtsTokenCount":3,"totalTokenCount":30}}]}

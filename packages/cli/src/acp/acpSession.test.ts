@@ -1278,4 +1278,54 @@ describe('Session', () => {
       );
     });
   });
+
+  it('reports standard ACP usage and a usage_update notification', async () => {
+    async function* usageStream() {
+      yield {
+        type: GeminiEventType.Content,
+        value: 'Hello',
+      } as const;
+      yield {
+        type: GeminiEventType.Finished,
+        value: {
+          reason: FinishReason.STOP,
+          usageMetadata: {
+            promptTokenCount: 20,
+            candidatesTokenCount: 7,
+            cachedContentTokenCount: 4,
+            thoughtsTokenCount: 3,
+            totalTokenCount: 30,
+          },
+        },
+      } as const;
+    }
+
+    mockSendMessageStream.mockReturnValue(usageStream());
+
+    const result = await session.prompt({
+      sessionId: 'session-1',
+      prompt: [{ type: 'text', text: 'Hi' }],
+    });
+
+    if (!result.usage) {
+      throw new Error('ACP_USAGE_MISSING');
+    }
+
+    expect(result.usage).toEqual({
+      totalTokens: 30,
+      inputTokens: 20,
+      outputTokens: 7,
+      cachedReadTokens: 4,
+      thoughtTokens: 3,
+    });
+    expect(mockConnection.sessionUpdate).toHaveBeenCalledWith({
+      sessionId: 'session-1',
+      update: {
+        sessionUpdate: 'usage_update',
+        used: 27,
+        size: 1_048_576,
+      },
+    });
+  });
+
 });

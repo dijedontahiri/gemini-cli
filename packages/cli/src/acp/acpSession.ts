@@ -39,6 +39,7 @@ import {
   type ToolConfirmationRequest,
   resolveAtCommandPath,
   type ResolvedAtCommandPath,
+  tokenLimit,
 } from '@google/gemini-cli-core';
 import * as acp from '@agentclientprotocol/sdk';
 import type { Part, FunctionCall } from '@google/genai';
@@ -361,7 +362,17 @@ export class Session {
 
     let totalInputTokens = 0;
     let totalOutputTokens = 0;
+    let totalCachedReadTokens = 0;
+    let totalThoughtTokens = 0;
+    let totalTokens = 0;
     const modelUsageMap = new Map<string, { input: number; output: number }>();
+    const buildUsage = (): acp.Usage => ({
+      totalTokens,
+      inputTokens: totalInputTokens,
+      outputTokens: totalOutputTokens,
+      cachedReadTokens: totalCachedReadTokens,
+      thoughtTokens: totalThoughtTokens,
+    });
 
     let currentParts: Part[] = parts;
     let turnCount = 0;
@@ -372,6 +383,7 @@ export class Session {
       if (maxTurns >= 0 && turnCount > maxTurns) {
         return {
           stopReason: 'max_turn_requests',
+          usage: buildUsage(),
           _meta: {
             quota: {
               token_count: {
@@ -401,6 +413,9 @@ export class Session {
       let turnModelId = this.context.config.getModel();
       let turnInputTokens = 0;
       let turnOutputTokens = 0;
+      let turnCachedReadTokens = 0;
+      let turnThoughtTokens = 0;
+      let turnTotalTokens = 0;
 
       try {
         const responseStream = this.context.geminiClient.sendMessageStream(
@@ -447,6 +462,13 @@ export class Session {
                 turnInputTokens = usage.promptTokenCount ?? turnInputTokens;
                 turnOutputTokens =
                   usage.candidatesTokenCount ?? turnOutputTokens;
+                turnCachedReadTokens =
+                  usage.cachedContentTokenCount ?? turnCachedReadTokens;
+                turnThoughtTokens =
+                  usage.thoughtsTokenCount ?? turnThoughtTokens;
+                turnTotalTokens =
+                  usage.totalTokenCount ??
+                  turnInputTokens + turnOutputTokens + turnThoughtTokens;
               }
               break;
             }
@@ -521,6 +543,7 @@ export class Session {
           // Treat this as a graceful end to the model's turn rather than a crash.
           return {
             stopReason: 'end_turn',
+            usage: buildUsage(),
             _meta: {
               quota: {
                 token_count: {
@@ -549,6 +572,9 @@ export class Session {
 
       totalInputTokens += turnInputTokens;
       totalOutputTokens += turnOutputTokens;
+      totalCachedReadTokens += turnCachedReadTokens;
+      totalThoughtTokens += turnThoughtTokens;
+      totalTokens += turnTotalTokens;
 
       if (turnInputTokens > 0 || turnOutputTokens > 0) {
         const existing = modelUsageMap.get(turnModelId) ?? {
@@ -560,9 +586,24 @@ export class Session {
         modelUsageMap.set(turnModelId, existing);
       }
 
+      if (
+        turnInputTokens > 0 ||
+        turnOutputTokens > 0 ||
+        turnCachedReadTokens > 0 ||
+        turnThoughtTokens > 0 ||
+        turnTotalTokens > 0
+      ) {
+        await this.sendUpdate({
+          sessionUpdate: 'usage_update',
+          used: turnInputTokens + turnOutputTokens,
+          size: tokenLimit(turnModelId),
+        });
+      }
+
       if (stopReason !== 'end_turn') {
         return {
           stopReason,
+          usage: buildUsage(),
           _meta: {
             quota: {
               token_count: {
@@ -614,6 +655,7 @@ export class Session {
 
     return {
       stopReason: 'end_turn',
+      usage: buildUsage(),
       _meta: {
         quota: {
           token_count: {
